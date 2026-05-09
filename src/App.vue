@@ -18,15 +18,18 @@
 
     <ul>
       <li
-        v-for="(task, index) in tasks"
-        :key="index"
-        :class="{ done: task.done }"
+        v-for="task in tasks"
+        :key="task.id"
       >
-        <span @click="toggleDone(index)">
+        <span>
           {{ task.text }}
         </span>
 
-        <button class="delete" @click="removeTask(index)">
+        <div class="todo-meta">
+          {{ formatDate(task.created_at) }}
+        </div>
+
+        <button class="delete" @click="removeTask(task)">
           ✕
         </button>
       </li>
@@ -39,7 +42,8 @@
 </template>
 
 <script setup>
-import { ref } from "vue"
+import { ref, onMounted } from 'vue'
+import { supabase } from './utils/supabase'
 
 const newTask = ref("")
 const tasks = ref([])
@@ -47,7 +51,7 @@ const errorMessage = ref("")
 const showError = ref(false)
 
 // Add task
-function addTask() {
+async function addTask() {
   const text = newTask.value.trim()
   if (text === "") {
     errorMessage.value = "Please enter a task before adding!"
@@ -59,24 +63,59 @@ function addTask() {
     return
   }
 
-  tasks.value.push({
-    text,
-    done: false
-  })
+  const { error } = await supabase
+    .from('todos')
+    .insert({ text })
+
+  if (error) {
+    errorMessage.value = "Error adding task!"
+    showError.value = true
+    setTimeout(() => {
+      showError.value = false
+    }, 3000)
+    return
+  }
 
   newTask.value = ""
   errorMessage.value = ""
   showError.value = false
+  await getTodos()
 }
 
-// Toggle done
-function toggleDone(index) {
-  tasks.value[index].done = !tasks.value[index].done
+
+// Remove task (soft delete)
+async function removeTask(task) {
+  const { error } = await supabase
+    .from('todos')
+    .update({ deleted_at: new Date().toISOString() })
+    .eq('id', task.id)
+  
+  if (!error) {
+    await getTodos()
+  }
 }
 
-// Remove task
-function removeTask(index) {
-  tasks.value.splice(index, 1)
+// Get todos from Supabase
+async function getTodos() {
+  try {
+    const { data, error } = await supabase
+      .from('todos')
+      .select('*')
+      .is('deleted_at', null)
+      .order('created_at', { ascending: false })
+    
+    if (error) {
+      console.error('Supabase error:', error)
+      errorMessage.value = "Error loading todos: " + error.message
+      showError.value = true
+    } else {
+      tasks.value = data || []
+    }
+  } catch (err) {
+    console.error('Unexpected error:', err)
+    errorMessage.value = "Connection error. Please check your setup."
+    showError.value = true
+  }
 }
 
 // Shake animation for input
@@ -89,6 +128,97 @@ function shakeInput() {
     }, 500)
   }
 }
+
+// Test database connection
+async function testConnection() {
+  try {
+    console.log('Testing Supabase connection...')
+    
+    // Test basic connectivity
+    const { data, error } = await supabase
+      .from('todos')
+      .select('count')
+      .limit(1)
+    
+    if (error) {
+      console.error('Connection test failed:', error)
+      return {
+        success: false,
+        error: error.message,
+        details: error
+      }
+    } else {
+      console.log('Connection successful!')
+      return {
+        success: true,
+        message: 'Database connected successfully',
+        data: data
+      }
+    }
+  } catch (err) {
+    console.error('Connection test error:', err)
+    return {
+      success: false,
+      error: 'Network error',
+      details: err
+    }
+  }
+}
+
+// Check if table exists
+async function checkTableExists() {
+  try {
+    const { data, error } = await supabase
+      .from('todos')
+      .select('*')
+      .limit(1)
+    
+    if (error) {
+      if (error.code === 'PGRST116') {
+        return { exists: false, error: 'Table does not exist' }
+      }
+      return { exists: false, error: error.message }
+    }
+    
+    return { exists: true, message: 'Table exists and accessible' }
+  } catch (err) {
+    return { exists: false, error: 'Connection failed' }
+  }
+}
+
+// Format date function
+function formatDate(dateString) {
+  if (!dateString) return 'No date'
+  const date = new Date(dateString)
+  return date.toLocaleDateString('en-US', {
+    year: 'numeric',
+    month: 'short',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit'
+  })
+}
+
+// Load todos on component mount
+onMounted(async () => {
+  console.log('App mounted, checking database connection...')
+  
+  // Test connection first
+  const connectionTest = await testConnection()
+  console.log('Connection test result:', connectionTest)
+  
+  // Check if table exists
+  const tableCheck = await checkTableExists()
+  console.log('Table check result:', tableCheck)
+  
+  // Load todos if everything is working
+  if (connectionTest.success && tableCheck.exists) {
+    await getTodos()
+  } else {
+    errorMessage.value = "Database connection issue. Please check console for details."
+    showError.value = true
+  }
+})
 </script>
 
 <style scoped>
@@ -181,16 +311,19 @@ li:hover {
 }
 
 li span {
-  color: #2d3748;
+  color: #000000;
   font-size: 16px;
   flex: 1;
   text-align: left;
+  padding-right: 15px;
 }
 
-li.done span {
-  text-decoration: line-through;
-  color: #a0aec0;
+.todo-meta {
+  font-size: 12px;
+  color: #64748b;
   opacity: 0.7;
+  margin-left: 10px;
+  font-style: italic;
 }
 
 .delete {
