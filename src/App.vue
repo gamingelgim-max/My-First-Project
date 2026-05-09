@@ -1,6 +1,6 @@
 <template>
   <div class="container">
-    <h1>📝 My Doing and Evrything In this Universe</h1>
+    <h1>📝 My Doing and Evrything In this </h1>
 
     <div class="input-box">
       <input
